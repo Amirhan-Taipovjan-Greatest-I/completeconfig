@@ -1,6 +1,7 @@
 package me.lortseam.completeconfig.gui.yacl;
 
 import com.google.common.collect.Lists;
+import com.google.common.reflect.TypeToken;
 import dev.isxander.yacl.api.*;
 import dev.isxander.yacl.gui.controllers.BooleanController;
 import dev.isxander.yacl.gui.controllers.ColorController;
@@ -19,6 +20,7 @@ import me.lortseam.completeconfig.CompleteConfig;
 import me.lortseam.completeconfig.data.*;
 import me.lortseam.completeconfig.gui.ConfigScreenBuilder;
 import me.lortseam.completeconfig.gui.GuiProvider;
+import me.lortseam.completeconfig.gui.yacl.controller.ListController;
 import net.minecraft.client.gui.screen.Screen;
 
 import java.awt.*;
@@ -113,7 +115,10 @@ public final class YaclScreenBuilder extends ConfigScreenBuilder<ControllerFunct
             GuiProvider.create(ColorEntry.class, (ColorEntry<Color> entry) -> (Option<Color> option) -> new ColorController(
                     option,
                     entry.isAlphaMode()
-            ), Color.class)
+            ), Color.class),
+            GuiProvider.create((Entry<List<Integer>> entry) -> (Option<List<Integer>> listOption) -> new ListController<>(
+                    IntegerFieldController::new
+            ), new TypeToken<List<Integer>>() {}.getType())
     );
 
     static {
@@ -164,6 +169,13 @@ public final class YaclScreenBuilder extends ConfigScreenBuilder<ControllerFunct
     }
 
     private <T> Option<T> buildOption(Entry<T> entry) {
+        Controller<T> parentController = null;
+        try {
+            parentController = (Controller<T>) createEntry(entry).apply(null);
+        } catch (NullPointerException ignore) {}
+        if (parentController instanceof ListController<?>) {
+            return buildListOption((Entry) entry, (ListController) parentController);
+        }
         var builder = Option.createBuilder(entry.getTypeClass())
                 .name(entry.getName())
                 .binding(entry.getDefaultValue(), entry::getValue, entry::setValue)
@@ -173,6 +185,37 @@ public final class YaclScreenBuilder extends ConfigScreenBuilder<ControllerFunct
             builder.flag(OptionFlag.GAME_RESTART);
         }
         return builder.build();
+    }
+
+    private <E, T extends List<E>> Option<T> buildListOption(Entry<T> entry, ListController<E> controller) {
+        Class<E> elementClass = (Class<E>) entry.getGenericTypes()[0];
+        E initialValue = controller.getInitialValue();
+        // TODO: Add @ConfigEntry.List#initialValue for custom initial values
+        if (initialValue == null) {
+            if (elementClass == Boolean.class) {
+                initialValue = (E) Boolean.FALSE;
+            } else if (elementClass == Integer.class) {
+                initialValue = (E) Integer.valueOf(0);
+            } else if (elementClass == Long.class) {
+                initialValue = (E) Long.valueOf(0);
+            } else if (elementClass == Float.class) {
+                initialValue = (E) Float.valueOf(0);
+            } else if (elementClass == Double.class) {
+                initialValue = (E) Double.valueOf(0);
+            } else if (elementClass == String.class) {
+                initialValue = (E) "";
+            }
+        }
+        var builder = ListOption.createBuilder(elementClass)
+                .name(entry.getName())
+                .binding(entry.getDefaultValue(), entry::getValue, (value) -> entry.setValue((T) value))
+                .controller(controller.getElementControllerBuilder())
+                .initial(initialValue);
+        entry.getDescription().ifPresent(builder::tooltip);
+        if (entry.requiresRestart()) {
+            builder.flag(OptionFlag.GAME_RESTART);
+        }
+        return (Option<T>) builder.build();
     }
 
 }
